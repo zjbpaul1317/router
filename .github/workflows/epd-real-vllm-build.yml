@@ -1,0 +1,90 @@
+name: EPD Rocky 9 vLLM Router build
+
+on:
+  push:
+    branches: [codex/epd-real-vllm-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository == 'zjbpaul1317/router'
+    name: Build vllm-router (Rocky 9 x86_64)
+    runs-on: ubuntu-22.04
+    container:
+      image: rockylinux:9
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          dnf -y install \
+            ca-certificates \
+            cmake \
+            curl \
+            gcc \
+            gcc-c++ \
+            git \
+            file \
+            make \
+            openssl-devel \
+            pkgconf-pkg-config \
+            protobuf-compiler \
+            python3
+          dnf clean all
+
+      - name: Install Rust 1.95.0
+        env:
+          CARGO_HOME: /opt/cargo
+          RUSTUP_HOME: /opt/rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.95.0
+          /opt/cargo/bin/rustc --version
+          /opt/cargo/bin/cargo --version
+          echo /opt/cargo/bin >> "$GITHUB_PATH"
+
+      - name: Build release binary
+        env:
+          CARGO_HOME: /opt/cargo
+          RUSTUP_HOME: /opt/rustup
+        run: cargo build --locked --release --bin vllm-router
+
+      - name: Collect binary metadata
+        run: |
+          mkdir -p artifact
+          install -m 0755 target/release/vllm-router artifact/vllm-router
+          sha256sum artifact/vllm-router | tee artifact/vllm-router.sha256
+          artifact/vllm-router --version | tee artifact/vllm-router.version
+          file artifact/vllm-router | tee artifact/vllm-router.file
+          printf 'head_sha=%s\n' "$GITHUB_SHA" > artifact/vllm-router.build-info
+          printf 'runner_image=rockylinux:9\n' >> artifact/vllm-router.build-info
+          printf 'host_arch=x86_64\n' >> artifact/vllm-router.build-info
+          printf 'rustc=%s\n' "$(/opt/cargo/bin/rustc --version)" >> artifact/vllm-router.build-info
+          printf 'cargo=%s\n' "$(/opt/cargo/bin/cargo --version)" >> artifact/vllm-router.build-info
+
+      - name: Upload Rocky 9 binary
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: vllm-router-linux-x86_64-rocky9
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write build provenance
+        run: |
+          {
+            echo '### vllm-router Rocky 9 build provenance'
+            echo
+            echo "- run URL: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- head SHA: $GITHUB_SHA"
+            echo "- artifact: vllm-router-linux-x86_64-rocky9"
+            echo "- artifact digest: ${{ steps.upload.outputs.artifact-digest }}"
+            echo "- binary SHA-256: $(cut -d ' ' -f 1 artifact/vllm-router.sha256)"
+          } >> "$GITHUB_STEP_SUMMARY"
