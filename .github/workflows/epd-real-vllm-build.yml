@@ -27,7 +27,6 @@ jobs:
           dnf -y install \
             ca-certificates \
             cmake \
-            curl \
             gcc \
             gcc-c++ \
             git \
